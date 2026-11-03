@@ -44,7 +44,7 @@ test('demo enquiry validates and displays a non-transmission notice', async ({ p
 test('mobile navigation can open, close on Escape and return focus', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 800 });
   await page.goto('/');
-  const toggle = page.getByRole('button', { name: 'Open navigation' });
+  const toggle = page.locator('.menu-toggle');
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   await page.keyboard.press('Escape');
