@@ -1,0 +1,162 @@
+name: Deploy (Auto-Determine or Select Target)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Deployment destination'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - 'auto'
+          - 'github-pages'
+          - 'vercel'
+      environment:
+        description: 'Target environment (preview or production)'
+        required: true
+        default: 'preview'
+        type: choice
+        options:
+          - 'preview'
+          - 'production'
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  determine-target:
+    name: Evaluate Deployability & Target
+    runs-on: ubuntu-latest
+    outputs:
+      chosen_target: ${{ steps.decide.outputs.target }}
+      environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies and test build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Determine deployment platform
+        id: decide
+        env:
+          INPUT_TARGET: ${{ github.event.inputs.target }}
+          HAS_VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN != '' }}
+        run: |
+          echo "Evaluating requested target: $INPUT_TARGET"
+          if [ "$INPUT_TARGET" = "auto" ]; then
+            if [ "$HAS_VERCEL_TOKEN" = "true" ]; then
+              TARGET="vercel"
+              REASON="Auto-selected Vercel because VERCEL_TOKEN secret is configured."
+            else
+              TARGET="github-pages"
+              REASON="Auto-selected GitHub Pages because no Vercel token was detected and the Vite static bundle is fully deployable to static hosting."
+            fi
+          else
+            TARGET="$INPUT_TARGET"
+            REASON="User manually selected $INPUT_TARGET."
+          fi
+
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "### Deployment Determination" >> $GITHUB_STEP_SUMMARY
+          echo "- **Selected Target:** \`$TARGET\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Rationale:** $REASON" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Environment:** \`${{ github.event.inputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
+
+  deploy-to-pages:
+    name: Deploy to GitHub Pages
+    needs: determine-target
+    if: needs.determine-target.outputs.chosen_target == 'github-pages'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build static site
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  deploy-to-vercel:
+    name: Deploy to Vercel
+    needs: determine-target
+    if: needs.determine-target.outputs.chosen_target == 'vercel'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check Vercel credentials
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::VERCEL_TOKEN secret is not set in GitHub repository secrets. Please configure VERCEL_TOKEN, VERCEL_ORG_ID, and VERCEL_PROJECT_ID."
+            exit 1
+          fi
+
+      - name: Install Vercel CLI
+        run: npm install --no-save vercel
+
+      - name: Deploy to Vercel Preview
+        if: needs.determine-target.outputs.environment == 'preview'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          npx vercel deploy --yes --token="$VERCEL_TOKEN"
+
+      - name: Deploy to Vercel Production
+        if: needs.determine-target.outputs.environment == 'production'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          npx vercel deploy --prebuilt=false --prod --yes --token="$VERCEL_TOKEN"
