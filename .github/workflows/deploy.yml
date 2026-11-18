@@ -28,7 +28,7 @@ concurrency:
 jobs:
   determine-target:
     name: Evaluate Deployability & Target
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       chosen_target: ${{ steps.decide.outputs.target }}
       environment: ${{ github.event.inputs.environment }}
@@ -77,7 +77,7 @@ jobs:
     name: Deploy to GitHub Pages
     needs: determine-target
     if: needs.determine-target.outputs.chosen_target == 'github-pages'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pages: write
@@ -117,7 +117,7 @@ jobs:
     name: Deploy to Vercel
     needs: determine-target
     if: needs.determine-target.outputs.chosen_target == 'vercel'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
